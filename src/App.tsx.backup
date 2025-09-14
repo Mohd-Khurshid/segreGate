@@ -1,0 +1,115 @@
+import React, { useState, useEffect } from 'react';
+import { Splash } from './components/Splash';
+import { Login } from './components/Login';
+import { OTPVerification } from './components/OTPVerification';
+import { ProfileSetup } from './components/ProfileSetup';
+import { Dashboard } from './components/Dashboard';
+import { Toaster } from './components/ui/sonner';
+import { auth, AuthUser } from './utils/auth';
+import { api } from './utils/api';
+
+type AppState = 'splash' | 'login' | 'otp' | 'profile-setup' | 'dashboard';
+
+export default function App() {
+  const [currentState, setCurrentState] = useState<AppState>('splash');
+  const [userPhone, setUserPhone] = useState('');
+  const [user, setUser] = useState<AuthUser | null>(null);
+
+  useEffect(() => {
+    // Check for existing session
+    const checkSession = async () => {
+      const { user: sessionUser, token } = await auth.getSession();
+      if (sessionUser && token) {
+        setUser(sessionUser);
+        api.setToken(token);
+        setCurrentState('dashboard');
+      }
+    };
+    
+    // Delay session check until after splash
+    const timer = setTimeout(checkSession, 2000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const handleSplashComplete = () => {
+    setCurrentState('login');
+  };
+
+  const handleLoginSubmit = (phone: string) => {
+    setUserPhone(phone);
+    setCurrentState('otp');
+  };
+
+  const handleOTPVerified = async () => {
+    // Check if user already has profile data
+    const { user: sessionUser, token } = await auth.getSession();
+    if (sessionUser && token) {
+      // User already exists, fetch their profile data
+      try {
+        const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-5108a8bb/user/profile`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        const data = await response.json();
+        if (data.profile) {
+          // User has existing profile, go directly to dashboard
+          setUser(sessionUser);
+          api.setToken(token);
+          setCurrentState('dashboard');
+        } else {
+          // No existing profile, show profile setup
+          setCurrentState('profile-setup');
+        }
+      } catch (error) {
+        console.error('Profile check error:', error);
+        // Fallback to profile setup if there's an error
+        setCurrentState('profile-setup');
+      }
+    } else {
+      // No session, show profile setup
+      setCurrentState('profile-setup');
+    }
+  };
+
+  const handleProfileSetup = async (profileData: any) => {
+    try {
+      const result = await auth.signUp({
+        phone: userPhone,
+        ...profileData
+      });
+      
+      if (result.success && result.user) {
+        setUser(result.user);
+        const token = auth.getAccessToken();
+        api.setToken(token);
+        setCurrentState('dashboard');
+      } else {
+        console.error('Profile setup failed:', result.error);
+        // Handle error - could show error message to user
+      }
+    } catch (error) {
+      console.error('Profile setup error:', error);
+    }
+  };
+
+  const handleLogout = () => {
+    setUser(null);
+    setUserPhone('');
+    api.setToken(null);
+    setCurrentState('login');
+  };
+
+  return (
+    <div className="size-full bg-background">
+      {currentState === 'splash' && <Splash onComplete={handleSplashComplete} />}
+      {currentState === 'login' && <Login onSubmit={handleLoginSubmit} />}
+      {currentState === 'otp' && <OTPVerification phone={userPhone} onVerified={handleOTPVerified} />}
+      {currentState === 'profile-setup' && <ProfileSetup onComplete={handleProfileSetup} />}
+      {currentState === 'dashboard' && <Dashboard user={user} onLogout={handleLogout} />}
+    </div>
+  );
+}
